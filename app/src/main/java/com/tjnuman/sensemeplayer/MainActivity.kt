@@ -1,5 +1,8 @@
 package com.tjnuman.sensemeplayer
-
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaExtractor
@@ -12,14 +15,23 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.room.Room
@@ -43,6 +55,19 @@ class MainActivity : ComponentActivity() {
     private val TAG = "MusicScanner"
 
     private var mediaPlayer: MediaPlayer? = null
+
+    private var currentClusterId = 1
+
+    private var currentMood: String = ""
+
+    private val moodNames = mapOf(
+        0 to "Mellow",
+        1 to "Energetic",
+        2 to "Relax",
+        3 to "Happy",
+        4 to "Sad",
+        5 to "Party"
+    )
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -76,6 +101,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             SenseMePlayerTheme {
 
+                // ------------------- Activity-level UI state -------------------
                 var progress by remember { mutableStateOf(0f) }
                 var statusText by remember { mutableStateOf("Idle") }
 
@@ -89,8 +115,8 @@ class MainActivity : ComponentActivity() {
                     ProcessingState.statusState = { txt -> statusText = txt }
                 }
 
-
-                LaunchedEffect(mediaPlayer, currentPlaylist, currentSongIndex) {
+                // Update currentPosition periodically
+                LaunchedEffect(mediaPlayer) {
                     while (true) {
                         val mp = mediaPlayer
                         if (mp != null && mp.isPlaying && !isUserSeeking) {
@@ -101,145 +127,230 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-
-
-                // ---------- WHOLE SCREEN IS SCROLLABLE ----------
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                // ------------------- Screen Background & Scroll -------------------
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
                 ) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
 
-                    // Top section: status, progress, refresh button
-                    item {
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(text = statusText)
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // Progress indicator (value param is a Float)
-                            LinearProgressIndicator(
-                                progress = progress,
-                                modifier = Modifier.fillMaxWidth(0.8f)
-                            )
-
-                            Spacer(modifier = Modifier.height(24.dp))
-
-                            Button(
-                                onClick = {
-                                    statusText = "Refreshing mood clusters..."
-                                    CoroutineScope(Dispatchers.Default).launch {
-                                        val newClusters = rebuildClusters()
-                                        withContext(Dispatchers.Main) {
-                                            clusterSongsState = newClusters
-                                            statusText = "Mood clusters updated!"
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(0.8f)
-                            ) {
-                                Text("Refresh Mood Clusters")
-                            }
-
-                            Spacer(modifier = Modifier.height(28.dp))
-                        }
-                    }
-
-                    // ---------- MUSIC PLAYER CONTROL BAR (visible when playlist not empty) ----------
-                    item {
-                        if (currentPlaylist.isNotEmpty()) {
-                            val curIndex = currentSongIndex.coerceIn(0, currentPlaylist.lastIndex)
-                            val nowPlaying = currentPlaylist.getOrNull(curIndex)
-
+                        // ------------------- Top Section: Status & Refresh -------------------
+                        item {
                             Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 Text(
-                                    text = "Now Playing: ${nowPlaying?.path?.substringAfterLast("/") ?: "None"}",
-                                    style = MaterialTheme.typography.titleMedium
+                                    text = statusText,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onBackground
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Button(onClick = { playPrevious() }) { Text("Prev")
-
-
-                                    }
-
-                                    Button(onClick = {
-                                        mediaPlayer?.let {
-                                            if (it.isPlaying) it.pause() else it.start()
-                                        }
-                                    }) {
-                                        Text(if (mediaPlayer?.isPlaying == true) "Pause" else "Play")
-                                    }
-
-                                    Button(onClick = { playNext() }) { Text("Next") }
-                                }
-
-                                Slider(
-                                    value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
-                                    onValueChange = { value ->
-                                        isUserSeeking = true
-                                        currentPosition = (value * duration).toInt()
-                                    },
-                                    onValueChangeFinished = {
-                                        mediaPlayer?.seekTo(currentPosition)
-                                        isUserSeeking = false
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-
 
                                 Spacer(modifier = Modifier.height(12.dp))
+
+                                LinearProgressIndicator(
+                                    progress = progress,
+                                    modifier = Modifier.fillMaxWidth(0.8f),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+
+                                Spacer(modifier = Modifier.height(24.dp))
+
+                                Button(
+                                    onClick = {
+                                        statusText = "Refreshing mood clusters..."
+                                        CoroutineScope(Dispatchers.Default).launch {
+                                            val newClusters = rebuildClusters()
+                                            withContext(Dispatchers.Main) {
+                                                clusterSongsState = newClusters
+                                                statusText = "Mood clusters updated!"
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(0.8f)
+                                ) {
+                                    Text("Refresh Mood Clusters")
+                                }
+
+                                Spacer(modifier = Modifier.height(28.dp))
                             }
                         }
-                    }
 
-                    // ---------- CLUSTER LIST ----------
-                    // Each cluster is its own item so list scrolls fine
-                    clusterSongsState.toSortedMap().forEach { (clusterId, songs) ->
+                        // ------------------- Now Playing Card -------------------
+                        // ------------------- Now Playing Card -------------------
                         item {
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Text(
-                                    text = "Mood $clusterId (${songs.size} songs)",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
+                            if (currentPlaylist.isNotEmpty()) {
+                                val curIndex = currentSongIndex.coerceIn(0, currentPlaylist.lastIndex)
+                                val nowPlaying = currentPlaylist.getOrNull(curIndex)
 
-                                songs.forEachIndexed { index, song ->
-                                    Text(
-                                        text = song.path.substringAfterLast("/"),
-                                        style = MaterialTheme.typography.bodyMedium,
+                                // Determine the cluster ID for the currently playing song
+                                // Add 1 to align with moodNames map (1–6)
+                                val currentClusterId = (clusterSongsState.entries.find { entry ->
+                                    entry.value.contains(nowPlaying)
+                                }?.key ?: 0) + 1
+
+                                // Get mood name from cluster ID
+                                val moodName = moodNames[currentClusterId] ?: "Melody"
+
+                                // Pick fixed album art based on mood
+                                val coverRes = when (moodName) {
+                                    "Mellow" -> R.drawable.mood_mellow
+                                    "Energetic" -> R.drawable.mood_energetic
+                                    "Relax" -> R.drawable.mood_relax
+                                    "Happy" -> R.drawable.mood_happy
+                                    "Sad" -> R.drawable.mood_sad
+                                    "Party" -> R.drawable.mood_party
+                                    else -> R.drawable.mood_mellow
+                                }
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp)
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .shadow(4.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                                ) {
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(vertical = 6.dp)
-                                            .clickable {
-                                                // IMPORTANT: set UI state before heavy work
-                                                currentPlaylist = songs
-                                                currentSongIndex = index
+                                            .padding(16.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally
+                                    ) {
+                                        // Album Art
+                                        Image(
+                                            painter = painterResource(id = coverRes),
+                                            contentDescription = "Album Art",
+                                            modifier = Modifier
+                                                .size(180.dp)
+                                                .clip(CircleShape)
+                                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                        )
 
-                                                // Play asynchronously (non-blocking prepare)
-                                                playSong(song, songs, index)
+                                        Spacer(Modifier.height(12.dp))
+
+                                        // Song name
+                                        Text(
+                                            text = "Now Playing: ${nowPlaying?.path?.substringAfterLast("/") ?: "None"}",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+
+                                        Spacer(Modifier.height(12.dp))
+
+                                        // Playback controls
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            IconButton(onClick = { playPrevious() }) {
+                                                Icon(Icons.Default.SkipPrevious, contentDescription = "Previous")
                                             }
-                                    )
+
+                                            IconButton(onClick = {
+                                                mediaPlayer?.let {
+                                                    if (it.isPlaying) it.pause() else it.start()
+                                                }
+                                            }) {
+                                                Icon(
+                                                    if (mediaPlayer?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                                    contentDescription = "Play/Pause"
+                                                )
+                                            }
+
+                                            IconButton(onClick = { playNext() }) {
+                                                Icon(Icons.Default.SkipNext, contentDescription = "Next")
+                                            }
+                                        }
+
+                                        Spacer(Modifier.height(12.dp))
+
+                                        // Progress slider
+                                        Slider(
+                                            value = if (duration > 0) currentPosition.toFloat() / duration else 0f,
+                                            onValueChange = { value ->
+                                                isUserSeeking = true
+                                                currentPosition = (value * duration).toInt()
+                                            },
+                                            onValueChangeFinished = {
+                                                mediaPlayer?.seekTo(currentPosition)
+                                                isUserSeeking = false
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = SliderDefaults.colors(
+                                                thumbColor = MaterialTheme.colorScheme.primary,
+                                                activeTrackColor = MaterialTheme.colorScheme.primary
+                                            )
+                                        )
+
+                                        // Time labels
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(formatTime(currentPosition))
+                                            Text(formatTime(duration))
+                                        }
+                                    }
                                 }
-                                Spacer(modifier = Modifier.height(16.dp))
+                            }
+                        }
+
+
+                        // ------------------- Mood Cluster Cards -------------------
+                        clusterSongsState.toSortedMap().forEach { (clusterId, songs) ->
+                            item {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 8.dp)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        val moodName = moodNames[clusterId] ?: "Mood $clusterId"
+                                        Text("$moodName (${songs.size} songs)")
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        songs.forEachIndexed { index, song ->
+                                            val isPlaying = currentPlaylist.getOrNull(currentSongIndex) == song
+                                            Text(
+                                                text = song.path.substringAfterLast("/"),
+                                                style = MaterialTheme.typography.bodyMedium.copy(
+                                                    color = if (isPlaying) MaterialTheme.colorScheme.primary
+                                                    else MaterialTheme.colorScheme.onSurface
+                                                ),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 6.dp)
+                                                    .clickable {
+                                                        currentPlaylist = songs
+                                                        currentSongIndex = index
+                                                        playSong(song, songs, index)
+                                                    }
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         }
+
+
+
+
     }
 
     // Ensure MediaPlayer released on destroy
@@ -248,6 +359,17 @@ class MainActivity : ComponentActivity() {
         mediaPlayer?.release()
         mediaPlayer = null
     }
+
+    private fun formatTime(ms: Int): String {
+        if (ms <= 0L) return "0:00"
+
+        val totalSeconds = ms / 1000
+        val minutes = totalSeconds / 60
+        val seconds = totalSeconds % 60
+
+        return String.format("%d:%02d", minutes, seconds)
+    }
+
 
     private fun startProcessing() {
         CoroutineScope(Dispatchers.Default).launch {
