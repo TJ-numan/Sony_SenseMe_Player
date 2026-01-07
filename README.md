@@ -58,11 +58,6 @@ This project is built as a **learning-focused but functional prototype** combini
 
 ---
 
-## 📸 Screenshots
-
-> *Add screenshots here*
-
----
 
 ## 🚀 Getting Started
 
